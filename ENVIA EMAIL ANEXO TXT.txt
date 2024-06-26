@@ -1,0 +1,281 @@
+﻿*---------------------------------------------------------------------------
+* Programa : ZPSDR_026
+* Cliente  : Gafisa
+* Módulo   : SD
+* Transação: ZTSD039
+* Descrição: Envio LOG Cubo Vendas
+* Autor    : Gabriel Hovaguimian Monteiro          Data: 19/01/2009
+*---------------------------------------------------------------------------
+* Histórico de Alterações:
+*---------------------------------------------------------------------------
+* Data       |Change #   | Autor            |Alteração
+*---------------------------------------------------------------------------
+* 19/01/2009 |DEVK924245 | Gabriel Monteiro |Desenvolvimento Inicial
+*---------------------------------------------------------------------------
+REPORT  zpsdr_026 MESSAGE-ID zlsd001.
+
+INCLUDE: zisd_026_top,                 "Declaração dos dados e da Tela de Seleção
+         zisd_026_forms.               "Forms do Relatório
+
+*-----------------------------------------------------------------------
+* Evento Start-Of-Selection
+*-----------------------------------------------------------------------
+START-OF-SELECTION.
+
+  PERFORM: zf_verifica_entradas,
+           zf_seleciona_dados.
+
+END-OF-SELECTION.
+
+  IF NOT pc_email IS INITIAL.
+*    PERFORM: zf_monta_tab_mail,
+*             zf_envia_email.
+     PERFORM zf_email.
+
+  ENDIF.
+
+  IF NOT pc_sw_rl IS INITIAL.
+*  PERFORM zf_alv.
+
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*&  Include           ZISD_026_FORMS
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  ZF_VERIFICA_ENTRADAS
+*&---------------------------------------------------------------------*
+*       Verifica os parâmetros informados
+*----------------------------------------------------------------------*
+FORM zf_verifica_entradas .
+
+  IF pc_sw_rl IS INITIAL AND pc_email IS INITIAL.
+    MESSAGE s000 DISPLAY LIKE cc_erro WITH text-m01.
+    LEAVE LIST-PROCESSING.
+
+  ENDIF.
+
+ENDFORM.                    " ZF_VERIFICA_ENTRADAS
+
+*&---------------------------------------------------------------------*
+*&      Form  ZF_SELECIONA_DADOS
+*&---------------------------------------------------------------------*
+*       Seleciona os dados necessários para o desenvolvimento
+*----------------------------------------------------------------------*
+FORM zf_seleciona_dados.
+
+  IF NOT pc_email IS INITIAL.
+
+*** Seleciona os dados do e-mail
+    SELECT *
+      FROM ztbsd_log_c_mail
+      INTO TABLE gw_mail
+      WHERE bukrs IN so_epsa.
+    IF NOT sy-subrc IS INITIAL.
+      MESSAGE s000 DISPLAY LIKE cc_erro WITH text-m02.
+      LEAVE LIST-PROCESSING.
+
+    ELSEIF so_stat IS INITIAL.
+
+*** Monta o range de status
+      REFRESH gw_mail_aux.
+      gw_mail_aux[] = gw_mail[].
+      SORT gw_mail_aux BY status_s status_e.
+      DELETE ADJACENT DUPLICATES FROM gw_mail_aux COMPARING status_s status_e.
+
+      so_stat-sign   = cc_sign.
+      so_stat-option = cc_opt.
+
+      LOOP AT gw_mail_aux INTO gs_mail.
+
+        so_stat-low = gs_mail-status_s.
+        APPEND so_stat.
+        CLEAR so_stat-low.
+
+        so_stat-low = gs_mail-status_e.
+        APPEND so_stat.
+        CLEAR so_stat-low.
+
+      ENDLOOP.
+
+    ENDIF.
+
+  ENDIF.
+
+*** Seleciona os dados do Log do Cubo
+  SELECT *
+    FROM ztbsd_log_cubo
+    INTO TABLE gw_zcubo
+    WHERE bukrs IN so_epsa
+      AND swenr IN so_empr
+      AND data  IN so_data.
+  IF sy-subrc IS INITIAL.
+    DELETE gw_zcubo WHERE NOT status IN so_stat.
+
+  ENDIF.
+
+  IF gw_zcubo[] IS INITIAL.
+    MESSAGE s000 DISPLAY LIKE cc_erro WITH text-m03.
+    LEAVE LIST-PROCESSING.
+
+  ENDIF.
+
+ENDFORM.                    " ZF_SELECIONA_DADOS
+
+*&---------------------------------------------------------------------*
+*&      Form  ZF_EMAIL
+*&---------------------------------------------------------------------*
+*       Envia o e-mail com os dados do Log do Cubo
+*----------------------------------------------------------------------*
+FORM zf_email .
+
+*** Cria o documento com anexo
+  gs_texto-line = text-t03.
+  APPEND gs_texto TO gw_texto.
+  CLEAR gs_texto.
+
+  TRY.
+      gc_documento = cl_document_bcs=>create_from_text(
+                   i_text = gw_texto
+                   i_importance = cc_impo
+                   i_subject = text-t02 ).
+    CATCH cx_bcs INTO gc_excep.
+      error_handling.
+  ENDTRY.
+
+*** Cria o anexo
+  REFRESH gw_texto.
+
+*** Monta o cabeçalho do anexo
+  CONCATENATE
+      text-c01 text-c02 text-c03 text-c04 text-c05 text-c06 text-c07 text-c08 text-c09
+      text-c10 text-c11 text-c12 text-c13 text-c14 text-c15 text-c16 text-c17 text-c18 text-c19
+      text-c20 text-c21 text-c22 text-c23 text-c24 text-c25 text-c26
+    INTO gs_texto-line
+    SEPARATED BY cc_bar
+    RESPECTING BLANKS.
+
+  APPEND gs_texto TO gw_texto.
+  CLEAR gs_texto.
+
+*** Monta tabela com o conteúdo do anexo
+  LOOP AT gw_zcubo INTO gs_zcubo.
+
+    gc_fakwr  = gs_zcubo-fakwr.
+    gc_kbetr  = gs_zcubo-kbetr.
+    gc_status = gs_zcubo-status.
+
+    CONCATENATE
+        gs_zcubo-bukrs        gs_zcubo-swenr(4)     gs_zcubo-data         gs_zcubo-hora
+        gs_zcubo-zuser        gs_zcubo-cod_log      gs_zcubo-xwetext(20)  gs_zcubo-regn(4)
+        gs_zcubo-sgenr+4(4)   gs_zcubo-xgetxt(10)   gs_zcubo-smenr+4(4)   gs_zcubo-refno(4)
+        gs_zcubo-partnr       gs_zcubo-documento    gs_zcubo-tipo_doc     gs_zcubo-matnr(10)
+        gs_zcubo-posnr+3(3)   gc_fakwr              gs_zcubo-kschl        gc_kbetr
+        gs_zcubo-zempvda      gs_zcubo-tabela(10)   gs_zcubo-rfc(20)      gc_status
+        gs_zcubo-zstart       gs_zcubo-mensagem(28)
+      INTO gs_texto-line
+      SEPARATED BY cc_bar
+      RESPECTING BLANKS.
+
+    APPEND gs_texto TO gw_texto.
+    CLEAR gs_texto.
+
+  ENDLOOP.
+
+  DESCRIBE TABLE gw_texto LINES gi_lin_txt.
+  gi_lin_txt = gi_lin_txt * 255.
+  gc_lin = gi_lin_txt.
+
+  TRY.
+      CALL METHOD gc_documento->add_attachment(
+        i_attachment_type = cc_tp_raw
+        i_attachment_subject = cc_ds_aq
+        i_attachment_size = gc_lin
+        i_att_content_text = gw_texto ).
+    CATCH cx_bcs INTO gc_excep.
+      error_handling.
+  ENDTRY.
+
+*** Cria a request de envio
+  TRY.
+      gc_facade = cl_bcs=>create_persistent( ).
+      gc_s_req = gc_facade->send_request.
+    CATCH cx_bcs.
+  ENDTRY.
+
+*** Adiciona o arquivo
+  gc_arq = gc_documento.
+  TRY.
+      CALL METHOD gc_s_req->setu_document( gc_arq ).
+    CATCH cx_bcs INTO gc_excep.
+      error_handling.
+  ENDTRY.
+
+*** Move para a caixa de saída
+  TRY.
+      CALL METHOD gc_s_req->set_link_to_outbox( cc_flag ).
+    CATCH cx_bcs.
+  ENDTRY.
+
+*** Não arquiva o e-mail
+  TRY.
+      CALL METHOD gc_s_req->setu_requested_status( cc_sem_stt ).
+    CATCH cx_bcs INTO gc_excep.
+      error_handling.
+  ENDTRY.
+
+*** Define o remetente
+  TRY.
+      CALL METHOD gc_s_req->setu_sender( gc_sender ).
+    CATCH cx_bcs INTO gc_excep.
+      error_handling.
+  ENDTRY.
+
+*** Define o destinatário
+  LOOP AT gw_mail INTO gs_mail.
+
+    CLEAR: gc_mail, gc_addr, gc_req.
+
+    gc_mail = gs_mail-mail.
+
+    TRY.
+        gc_addr = cl_cam_address_bcs=>create_internet_address(
+                                         gc_mail ).
+      CATCH cx_bcs INTO gc_excep.
+        error_handling.
+    ENDTRY.
+
+    gc_req = gc_addr.
+
+    TRY.
+        CALL METHOD gc_s_req->add_recipient( i_recipient = gc_req ).
+      CATCH cx_bcs INTO gc_excep.
+        error_handling.
+    ENDTRY.
+
+  ENDLOOP.
+
+*** Texto
+  gc_msg_sub = text-t02.
+
+  TRY.
+      gc_facade->set_message_subject( gc_msg_sub ).
+    CATCH cx_bcs INTO gc_excep.
+      error_handling.
+  ENDTRY.
+
+*** Libera a request de envio
+  TRY.
+      CALL METHOD gc_s_req->release( i_with_error_screen = space ).
+    CATCH cx_bcs INTO gc_excep.
+      error_handling.
+  ENDTRY.
+
+  COMMIT WORK.
+
+  IF sy-subrc IS INITIAL.
+    MESSAGE s000 WITH text-m04.
+
+  ENDIF.
+
+ENDFORM.                    " ZF_EMAIL

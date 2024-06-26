@@ -1,0 +1,296 @@
+*-----------------------------------------------------------------------
+* Descrição: Enviar e-mail para um endereço externo (Correio externo)
+*            Transação SBWP
+* Obs.: Transação SCOT para gerenciar o envio de e-mail
+*
+* Enviar e-mail do SAP para um endereço de e-mail externo requer o uso do
+* SAPconnect o qual será realizado a conexão entre o R/3 e o
+* "mundo externo".
+*
+*-----------------------------------------------------------------------
+
+REPORT  z_fng_email_ext.
+
+*-----------------------------------------------------------------------
+*Tabelas Internas
+*-----------------------------------------------------------------------
+DATA: t_body TYPE TABLE OF solisti1             , "Corpo da Mensagem
+      t_description_obj TYPE TABLE OF sopcklsti1, "Descr. Obj. Importados
+      t_receivers TYPE TABLE OF somlreci1       . "Destinatários
+
+*-----------------------------------------------------------------------
+*Work Areas
+*-----------------------------------------------------------------------
+DATA: w_document_data   TYPE sodocchgi1,
+      w_description_obj TYPE sopcklsti1,
+      w_receivers       TYPE somlreci1 .
+
+*-----------------------------------------------------------------------
+*Variáveis
+*-----------------------------------------------------------------------
+DATA: v_sentall TYPE sonv-flag , "Flag: Document sent to all
+      v_matnr   TYPE mara-matnr, "Material
+      v_nodados TYPE c         , "Flag ausência de dados
+      v_maktx   TYPE makt-maktx. "Descrição do Material
+
+*-----------------------------------------------------------------------
+*Tela de Seleção
+*-----------------------------------------------------------------------
+PARAMETERS: p_matnr TYPE mara-matnr  OBLIGATORY, "Número do Material
+            p_assunt(40) TYPE c DEFAULT 'Auto Estudo - FNG' OBLIGATORY,
+            p_mail(40)   TYPE c DEFAULT 'felipe.gimenez@procwork.com.br'
+                         OBLIGATORY.
+
+*-----------------------------------------------------------------------
+*Programa Principal
+*-----------------------------------------------------------------------
+START-OF-SELECTION.
+
+  PERFORM zf_refresh.
+
+  PERFORM zf_select.
+
+  PERFORM zf_constroi_email.
+
+  PERFORM zf_envia_email.
+
+*-----------------------------------------------------------------------
+*                               SUBROTINAS
+*-----------------------------------------------------------------------
+*&---------------------------------------------------------------------*
+*&      Form  zf_body
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_body .
+  DATA: l_text1(30)  TYPE c,
+        l_text2(100) TYPE c.
+
+*Corpo do e-mail
+  APPEND 'Bom dia,'    TO t_body.
+  APPEND space TO t_body.
+  APPEND 'Auto Estudo - Felipe Gimenez' TO t_body.
+  APPEND space TO t_body.
+  CONCATENATE 'Material : ' v_matnr INTO l_text1 SEPARATED BY space.
+  APPEND l_text1 TO t_body.
+
+  APPEND space TO t_body.
+  CONCATENATE 'Descrição: ' v_maktx INTO l_text2 SEPARATED BY space.
+  APPEND l_text2 TO t_body.
+
+ENDFORM.                    " zf_body
+*&---------------------------------------------------------------------*
+*&      Form  zf_envia_email
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_envia_email .
+
+*Ao enviar a mensagem através da função abaixo, ela fica armazenada na
+*caixa de saída - SAPoffice - (Transação SBWP), para enviar a mensagem
+*para um endereço externo vc deve executar o programa "RSCONN01"
+
+  CALL FUNCTION 'SO_NEW_DOCUMENT_ATT_SEND_API1'
+    EXPORTING
+      document_data              = w_document_data
+      put_in_outbox              = 'X'
+    IMPORTING
+      sent_to_all                = v_sentall
+    TABLES
+      packing_list               = t_description_obj
+      contents_txt               = t_body
+      receivers                  = t_receivers
+    EXCEPTIONS
+      too_many_receivers         = 1
+      document_not_sent          = 2
+      document_type_not_exist    = 3
+      operation_no_authorization = 4
+      parameter_error            = 5
+      x_error                    = 6
+      enqueue_error              = 7
+      OTHERS                     = 8.
+
+  IF sy-subrc = 0.
+    PERFORM zf_sapconnect.
+  ELSE.
+
+    CASE sy-subrc.
+      WHEN 1.      PERFORM zf_msg_erro USING 'TOO_MANY_RECEIVERS'.
+      WHEN 2.      PERFORM zf_msg_erro USING 'DOCUMENT_NOT_SENT'.
+      WHEN 3.      PERFORM zf_msg_erro USING 'DOCUMENT_TYPE_NOT_EXIST'.
+      WHEN 4.      PERFORM zf_msg_erro USING 'OPERATION_NO_AUTHORIZATION'.
+      WHEN 5.      PERFORM zf_msg_erro USING 'PARAMETER_ERROR '.
+      WHEN 6.      PERFORM zf_msg_erro USING 'X_ERROR'.
+      WHEN 7.      PERFORM zf_msg_erro USING 'ENQUEUE_ERROR'.
+      WHEN OTHERS. PERFORM zf_msg_erro USING 'Contate o Administrador'.
+    ENDCASE.
+
+  ENDIF.
+
+ENDFORM.                    " zf_envia_email
+*&---------------------------------------------------------------------*
+*&      Form  zf_sapconnect
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_sapconnect .
+
+*Envia o e-mail da Caixa de Saída para o SAPConnect
+*rsconn01 = SAP CONNECT: Start Send Process
+  WAIT UP TO 2 SECONDS.
+  SUBMIT rsconn01 WITH mode   = 'INT' "Tipo de Conexão
+                  WITH output = 'X'   "Exibir Resultado do SAPCONNECT
+                  AND RETURN.
+
+ENDFORM.                    " zf_sapconnect
+*&---------------------------------------------------------------------*
+*&      Form  zf_constroi_email
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_constroi_email .
+
+  PERFORM zf_atributos.
+
+  PERFORM zf_receivers.
+
+  PERFORM zf_body.
+
+  PERFORM zf_description_obj.
+
+ENDFORM.                    " zf_constroi_email
+*&---------------------------------------------------------------------*
+*&      Form  zf_atributos
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_atributos .
+
+*Preenche atributos do documento
+  w_document_data-doc_size   = 1.
+  w_document_data-obj_langu  = sy-langu.
+  w_document_data-obj_name   = 'SAPRPT'.
+  w_document_data-obj_descr  = p_assunt.
+  w_document_data-sensitivty = 'F'.
+
+ENDFORM.                    " zf_atributos
+*&---------------------------------------------------------------------*
+*&      Form  zf_refresh
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_refresh .
+
+  FREE: t_body           ,
+        t_description_obj,
+        t_receivers      ,
+        w_document_data  ,
+        w_description_obj,
+        w_receivers      ,
+        v_sentall        .
+
+ENDFORM.                    " zf_refresh
+*&---------------------------------------------------------------------*
+*&      Form  zf_description_obj
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_description_obj .
+
+*SAPoffice: Description of Imported Object Components
+  w_description_obj-transf_bin = space.
+  w_description_obj-head_start = 1    .
+  w_description_obj-head_num   = 0    .
+  w_description_obj-body_start = 1    .
+  w_description_obj-doc_type   = 'RAW'.
+
+  DESCRIBE TABLE t_body LINES w_description_obj-body_num.
+
+  APPEND w_description_obj TO t_description_obj.
+
+ENDFORM.                    " zf_description_obj
+*&---------------------------------------------------------------------*
+*&      Form  zf_receivers
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_receivers .
+
+*Adiciona os Destinatários do e-mail
+  w_receivers-receiver   = p_mail.
+  w_receivers-rec_type   = 'U'.
+  w_receivers-com_type   = 'INT'.
+  w_receivers-notif_del  = 'X'.
+  w_receivers-notif_ndel = 'X'.
+  APPEND w_receivers TO t_receivers.
+
+ENDFORM.                    " zf_receivers
+*&---------------------------------------------------------------------*
+*&      Form  zf_msg_erro
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_0160   text
+*----------------------------------------------------------------------*
+FORM zf_msg_erro  USING mensagem TYPE string.
+
+  MESSAGE s000(oo) DISPLAY LIKE 'E' WITH mensagem.
+
+ENDFORM.                    " zf_msg_erro
+*&---------------------------------------------------------------------*
+*&      Form  zf_select
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_select .
+
+  SELECT SINGLE matnr
+  FROM mara
+  INTO v_matnr
+  WHERE matnr = p_matnr.
+
+  IF sy-subrc <> 0.
+    MESSAGE s000(oo) DISPLAY LIKE 'E' WITH 'Material não encontrado'.
+    v_nodados = 'X'.
+  ELSE.
+
+    SELECT SINGLE maktx
+    FROM makt
+    INTO v_maktx
+    WHERE matnr = v_matnr AND
+          spras = sy-langu.
+
+    CHECK v_nodados <> 0.
+    MESSAGE s000(oo) DISPLAY LIKE 'E' WITH 'Descrição do Material não encontrada'.
+    v_nodados = 'X'.
+
+  ENDIF.
+
+ENDFORM.                    " zf_select

@@ -1,0 +1,3 @@
+Dica importante:
+- Para enviar e-mails com anexos utilize a função: SO_NEW_DOCUMENT_ATT_SEND_API1
+- Para enviar e-mails sem anexos utilize a função: SO_NEW_DOCUMENT_SEND_API1

@@ -1,0 +1,325 @@
+*-----------------------------------------------------------------------
+* Descrição: Enviar e-mail para um usuário do SAP (correio interno)
+*            Transação SBWP
+*-----------------------------------------------------------------------
+
+REPORT  z_fng_email.
+
+*-----------------------------------------------------------------------
+*Estruturas
+*-----------------------------------------------------------------------
+*Estruturas para ajuda de pesquisa para usuários
+TYPES: BEGIN OF y_helpmed,
+        mandt TYPE usr01-mandt,
+        bname TYPE usr01-bname,
+       END   OF y_helpmed.
+
+*-----------------------------------------------------------------------
+*Tabelas Internas
+*-----------------------------------------------------------------------
+DATA: t_receivers      TYPE TABLE OF somlreci1 , "Receptores
+      t_object_content TYPE TABLE OF solisti1  . "Conteúdo do Documento
+
+* Tabela interna para o Search Help
+DATA: t_helpmed TYPE TABLE OF y_helpmed. "Ajuda de pesquisa
+
+*-----------------------------------------------------------------------
+*Work Areas
+*-----------------------------------------------------------------------
+DATA: w_receivers      TYPE somlreci1 ,
+      w_document_data  TYPE sodocchgi1, "Atributos do Documento
+      w_object_content TYPE solisti1  .
+
+* Work Areas para o Search Help
+DATA: l_dynpread     LIKE TABLE OF dynpread WITH HEADER LINE,
+      l_t_tab        LIKE dfies OCCURS 0,
+      w_t_tab        LIKE dfies.
+
+*-----------------------------------------------------------------------
+*Variáveis
+*-----------------------------------------------------------------------
+DATA: v_matnr   TYPE mara-matnr,
+      v_nodados TYPE c         ,
+      v_maktx   TYPE makt-maktx.
+
+*-----------------------------------------------------------------------
+*Range
+*-----------------------------------------------------------------------
+Data: s_bname type range of usr01-bname.
+
+*-----------------------------------------------------------------------
+*Tela de Seleção
+*-----------------------------------------------------------------------
+PARAMETERS: p_matnr TYPE mara-matnr  obligatory, "Número do Material
+            p_users TYPE usr01-bname obligatory. "Nome do Usuário
+
+*-----------------------------------------------------------------------
+*Eventos da Tela de Seleção
+*-----------------------------------------------------------------------
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_users.
+  PERFORM zf_search_help.
+
+*-----------------------------------------------------------------------
+*Programa Principal
+*-----------------------------------------------------------------------
+START-OF-SELECTION.
+
+  PERFORM zf_refresh.
+
+  PERFORM zf_select_data.
+
+  CHECK v_nodados IS INITIAL.
+
+  PERFORM zf_constroi_email.
+
+  PERFORM zf_envia_mail.
+
+*-----------------------------------------------------------------------
+*                              SUBROTINAS
+*-----------------------------------------------------------------------
+*&---------------------------------------------------------------------*
+*&      Form  zf_envia_mail
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_envia_mail .
+
+  CALL FUNCTION 'SO_NEW_DOCUMENT_SEND_API1'
+    EXPORTING
+      document_data              = w_document_data
+      document_type              = 'RAW'
+    TABLES
+      object_content             = t_object_content
+      receivers                  = t_receivers
+    EXCEPTIONS
+      too_many_receivers         = 1
+      document_not_sent          = 2
+      document_type_not_exist    = 3
+      operation_no_authorization = 4
+      parameter_error            = 5
+      x_error                    = 6
+      enqueue_error              = 7
+      OTHERS                     = 8.
+
+  IF sy-subrc <> 0.
+
+    CASE sy-subrc.
+      WHEN 1.       PERFORM zf_msg_erro USING 'TOO_MANY_RECEIVERS'.
+      WHEN 2.       PERFORM zf_msg_erro USING 'DOCUMENT_NOT_SENT'.
+      WHEN 3.       PERFORM zf_msg_erro USING 'DOCUMENT_TYPE_NOT_EXIST'.
+      WHEN 4.       PERFORM zf_msg_erro USING 'OPERATION_NO_AUTHORIZATION'.
+      WHEN 5.       PERFORM zf_msg_erro USING 'PARAMETER_ERROR '.
+      WHEN 6.       PERFORM zf_msg_erro USING 'X_ERROR'.
+      WHEN 7.       PERFORM zf_msg_erro USING 'ENQUEUE_ERROR'.
+      WHEN OTHERS.  PERFORM zf_msg_erro USING 'Contate o Administrador'.
+    ENDCASE.
+  ELSE.
+    MESSAGE s000(oo) WITH 'E-mail enviado com sucesso.'.
+  ENDIF.
+
+ENDFORM.                    " zf_envia_mail
+*&---------------------------------------------------------------------*
+*&      Form  zf_msg_erro
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_0018   text
+*----------------------------------------------------------------------*
+FORM zf_msg_erro  USING mensagem TYPE string.
+
+  MESSAGE s000(oo) DISPLAY LIKE 'E' WITH mensagem.
+
+ENDFORM.                    " zf_msg_erro
+*&---------------------------------------------------------------------*
+*&      Form  zf_refresh
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_refresh .
+
+  FREE: t_receivers    ,
+        w_receivers    ,
+        w_document_data,
+        v_nodados      ,
+        v_matnr        ,
+        v_maktx        .
+
+ENDFORM.                    " zf_refresh
+*&---------------------------------------------------------------------*
+*&      Form  zf_receivers
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_receivers .
+
+  w_receivers-receiver = p_users.
+  w_receivers-rec_type = 'B'.
+  w_receivers-express = ' '.
+  APPEND w_receivers TO t_receivers.
+
+ENDFORM.                    " zf_receivers
+*&---------------------------------------------------------------------*
+*&      Form  zf_conteudo
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_conteudo .
+*Conteúdo (Corpo) do e-mail
+  w_object_content-line = 'Bom dia,'.
+  APPEND w_object_content TO t_object_content.
+  CLEAR w_object_content-line.
+  w_object_content-line = space.
+  APPEND w_object_content TO t_object_content.
+  CLEAR w_object_content-line.
+  w_object_content-line = 'Auto Estudo - Felipe Gimenez - Enviar e-mail'.
+  APPEND w_object_content TO t_object_content.
+  CLEAR w_object_content-line.
+  w_object_content-line = space.
+  APPEND w_object_content TO t_object_content.
+
+*Material
+  CONCATENATE 'Material :' v_matnr INTO w_object_content-line
+                                   SEPARATED BY space.
+  APPEND w_object_content TO t_object_content.
+  CLEAR w_object_content-line.
+
+*Quebra de Linha
+  w_object_content-line = space.
+  APPEND w_object_content TO t_object_content.
+
+*Descrição
+  CONCATENATE 'Descrição:' v_maktx INTO w_object_content-line
+                                   SEPARATED BY space.
+  APPEND w_object_content TO t_object_content.
+  CLEAR w_object_content-line.
+
+ENDFORM.                    " zf_conteudo
+*&---------------------------------------------------------------------*
+*&      Form  zf_constroi_email
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_constroi_email .
+
+  PERFORM zf_receivers.
+
+  PERFORM zf_atributos.
+
+  PERFORM zf_conteudo.
+
+ENDFORM.                    " zf_constroi_email
+*&---------------------------------------------------------------------*
+*&      Form  zf_atributos
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_atributos .
+
+*Atributos do e-mail (Título, Prioridade, Prazo de Validade, etc...)
+  w_document_data-obj_descr = 'Auto Estudo - Felipe Gimenez'.
+
+ENDFORM.                    " zf_atributos
+*&---------------------------------------------------------------------*
+*&      Form  zf_select_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_select_data .
+
+  SELECT SINGLE matnr
+  FROM mara
+  INTO v_matnr
+  WHERE matnr = p_matnr.
+
+  IF sy-subrc <> 0.
+    MESSAGE s000(oo) DISPLAY LIKE 'E' WITH 'Material não encontrado'.
+    v_nodados = 'X'.
+  ELSE.
+
+    SELECT SINGLE maktx
+    FROM makt
+    INTO v_maktx
+    WHERE matnr = v_matnr AND
+          spras = sy-langu.
+
+    CHECK v_nodados <> 0.
+    MESSAGE s000(oo) DISPLAY LIKE 'E' WITH 'Descrição do Material não encontrada'.
+    v_nodados = 'X'.
+
+  ENDIF.
+
+ENDFORM.                    " zf_select_data
+*&---------------------------------------------------------------------*
+*&      Form  zf_search_help
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM zf_search_help .
+
+* Limpar tabelas a serem utilizadas
+  REFRESH: l_t_tab[],
+           t_helpmed.
+
+  IF l_t_tab[] IS INITIAL. "Colunas de exibição na POP-UP do HELP
+
+    w_t_tab-tabname   = 'USR01'.
+    w_t_tab-fieldname = 'BNAME'.
+    APPEND w_t_tab TO l_t_tab.
+
+  ENDIF.
+
+* Seleciona dados disponiveis para exibição
+  SELECT mandt
+         bname
+  FROM usr01
+  INTO TABLE t_helpmed
+  WHERE bname IN s_bname.
+
+* Função para gerar a tela de ajuda
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'BNAME'
+      dynpprog        = sy-repid
+      dynpnr          = '1000'
+      dynprofield     = 'P_USERS'
+      stepl           = 0
+      window_title    = 'Usuários SAP'
+      value_org       = 'S'
+    TABLES
+      value_tab       = t_helpmed
+      field_tab       = l_t_tab
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+ENDFORM.                    " zf_search_help
